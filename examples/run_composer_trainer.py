@@ -21,7 +21,7 @@ from composer.loggers import LogLevel
 from composer.trainer.trainer_hparams import TrainerHparams
 from composer.utils import dist
 from composer.utils.misc import warning_on_one_line
-
+import torch_xla.debug.metrics as met
 
 def _main():
     warnings.formatwarning = warning_on_one_line
@@ -79,8 +79,10 @@ def _mp_fn(index):
 
 
 if __name__ == '__main__':
-    if os.getenv('XRT_TPU_CONFIG'):
-        import torch_xla.distributed.xla_multiprocessing as xmp
-        xmp.spawn(_mp_fn, args=(), nprocs=8)
-    else:
-        _main()
+    # if os.getenv('XRT_TPU_CONFIG'):
+    #    import torch_xla.distributed.xla_multiprocessing as xmp
+    #    xmp.spawn(_mp_fn, args=(), nprocs=1)
+    # else:
+_main()
+    # print(met.metrics_report())
+    # import ipdb; ipdb.set_trace()

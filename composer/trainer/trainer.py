@@ -1560,7 +1560,8 @@ class Trainer:
                     # total_loss can be None if gradient scaling failed
                     dist.all_reduce(total_loss, reduce_operation='SUM')
                     if isinstance(self._device, DeviceTPU):
-                        full_loss = total_loss
+                        if int(self.state.timestamp.batch) % 20 == 0:
+                            full_loss = total_loss.cpu().item()
                     else:
                         full_loss = total_loss.cpu().item()
                         self.logger.data_batch({'loss/train': full_loss / dist.get_world_size()})
@@ -1737,9 +1738,9 @@ class Trainer:
             should_handle_cuda_oom = self._device.tensor_to_device(
                 torch.tensor([should_handle_cuda_oom], dtype=torch.uint8))
 
-            if type(self._device) != DeviceTPU:
+            if not isinstance(self._device, DeviceTPU):
                 dist.all_reduce(should_handle_cuda_oom, reduce_operation='MAX')
-            if int(should_handle_cuda_oom.item()) == 1:
+            if False: #  int(should_handle_cuda_oom.item()) == 1:
                 # If any rank hit CUDA OOM, update grad_accum and retry. Ignore any caught_timeout_error since
                 # it is likely transient, e.g. timeout because certain ranks OOMed and didn't reach barrier.
                 # Raise runtime error if training 1 sample at a time still resulted in CUDA out of memory
@@ -1761,12 +1762,12 @@ class Trainer:
             # Otherwise, log grad_accum and return calculated loss
             else:
                 # Synchronize new batch compute time
-                batch_compute_time = end_time - start_time
-                batch_compute_time = self._device.tensor_to_device(torch.tensor([batch_compute_time],
-                                                                                dtype=torch.float))
-                dist.all_reduce(batch_compute_time, reduce_operation='MAX')
-                self.batch_compute_time = batch_compute_time.item()
-
+                # batch_compute_time = end_time - start_time
+                # batch_compute_time = self._device.tensor_to_device(torch.tensor([batch_compute_time],
+                #                                                                 dtype=torch.float))
+                # dist.all_reduce(batch_compute_time, reduce_operation='MAX')
+                # self.batch_compute_time = batch_compute_time.item()
+                self.batch_compute_time = 1
                 self.logger.data_batch({'trainer/grad_accum': self.state.grad_accum})
                 return total_loss
 

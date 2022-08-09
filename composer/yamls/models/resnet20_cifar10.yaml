@@ -2,18 +2,18 @@ train_dataset:
   cifar10:
     datadir: /datasets/CIFAR10
     is_train: true
-    download: false
+    download: true
     shuffle: true
     drop_last: true
-val_dataset:
-  cifar10:
-    datadir: /datasets/CIFAR10
-    is_train: false
-    download: false
-    shuffle: false
-    drop_last: false
+# val_dataset:
+#   cifar10:
+#     datadir: /datasets/CIFAR10
+#     is_train: false
+#     download: true
+#     shuffle: false
+#     drop_last: false
 optimizers:
-  decoupled_sgdw:
+  sgd:
     lr: 1.2
     momentum: 0.9
     weight_decay: 2.0e-3
@@ -30,9 +30,9 @@ model:
     initializers:
       - kaiming_normal
       - bn_uniform
-max_duration: 160ep
-train_batch_size: 1024
-eval_batch_size: 1000
+max_duration: 1ep
+train_batch_size: 128
+eval_batch_size: 128
 seed: 17
 grad_accum: 1
 dataloader:
@@ -40,4 +40,6 @@ dataloader:
   timeout: 0
   prefetch_factor: 2
   persistent_workers: true
-  num_workers: 8
+  num_workers: 4
+train_subset_num_batches: 40
+
