@@ -407,6 +407,8 @@ def save_checkpoint(
         # Deepspeed requires tarballs; appending `.tar`
         checkpoint_filepath += '.tar'
 
+    # tmpdir to create a clean tarball
+    # not only for deepspeed, but if one wants to compress the composer state file as well.
     with tempfile.TemporaryDirectory() as tmpdir:
         composer_states_filepath = os.path.join(tmpdir, _COMPOSER_STATES_FILENAME)
         if dist.get_global_rank() == 0:

@@ -351,10 +351,17 @@ class CheckpointSaver(Callback):  # noqa: D101
             self._save_checkpoint(state, logger, log_level)
 
     def _save_checkpoint(self, state: State, logger: Logger, log_level: LogLevel):
-        checkpoint_filepath = os.path.join(format_name_with_dist(self.folder, state.run_name), self.filename)
+        checkpoint_filepath = os.path.join(format_name_with_dist(self.folder, state.run_name),
+                                           self.filename)  # TODO: experiment
         checkpoint_filepaths = checkpoint.save_checkpoint(state, checkpoint_filepath, weights_only=self.weights_only)
+        # Optional[str, None]
+        # # from the design, wanted checkpoint_filepaths to have everything (e.g. for single node training)
 
         if dist.get_global_rank() < len(checkpoint_filepaths):
+            """
+            DeepSpeed-0 saves file for each rank, make sure each rank uploads
+            Otherwise (only rank0 saves, so only rank0 needs to upload)
+            """
             # Log the checkpoint as an artifact
             checkpoint_filepath = checkpoint_filepaths[dist.get_global_rank()]
             if self.artifact_name is not None:
@@ -376,7 +383,7 @@ class CheckpointSaver(Callback):  # noqa: D101
                         self.latest_filename,
                         state.run_name,
                         state.timestamp,
-                    ).lstrip('/'),
+                    ).lstrip('/'),  # protect from os.path.join(self.folder, '/xyz'), maybe (TODO: experiment )
                 )
                 if is_model_deepspeed(state.model) and not is_tar(symlink_name):
                     # Deepspeed requires tarballs; appending `.tar`

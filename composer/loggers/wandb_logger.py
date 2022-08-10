@@ -1,6 +1,26 @@
 # Copyright 2022 MosaicML Composer authors
 # SPDX-License-Identifier: Apache-2.0
 
+"""
+Notes:
+* order of python exits due to exception vs. due to process completion:
+
+the order of __del__ vs atexit called are possibly reversed
+
+* wandb ->
+
+during atexit, if w&b is still open, it'll try to shutdown itself.
+
+issue: atexit, w&b.close; __del__, w&b close.
+
+
+* close / postclose to make sure they run last.
+
+things to do:
+* better ordering of callbacks close procedures can help
+* create a second Trainer with the same callbacks used as the first one.
+* able to reset all callbacks if its bound to a different state (e.g. for notebooks, etc.)
+"""
 """Log to `Weights and Biases <https://wandb.ai/>`_."""
 
 from __future__ import annotations
@@ -241,6 +261,7 @@ class WandBLogger(LoggerDestination):
                 os.rename(artifact_path, destination)
 
     def post_close(self) -> None:
+        # made sure this runs last in case someone else etc.
         import wandb
 
         # Cleaning up on post_close so all artifacts are uploaded
