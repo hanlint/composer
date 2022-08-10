@@ -173,6 +173,8 @@ def _get_device(device: Optional[Union[str, Device]]):
         elif device.lower() == 'gpu':
             device = DeviceGPU()
         elif device.lower() == 'tpu':
+            if not _is_tpu_installed:
+                raise MissingConditionalImportError(extra_deps_group='tpu', conda_package='torch_xla[tpuvm]')
             device = DeviceTPU()
         else:
             raise ValueError(f'device ({device}) must be one of (cpu, gpu, tpu).')
@@ -220,6 +222,18 @@ def _generate_run_name() -> str:
     generated_run_name = run_name_list[0]
     return generated_run_name
 
+def _is_tpu_installed() -> bool:
+    try:
+        import torch_xla.core.xla_model as xm
+    except ImportError:
+        return False
+    else:
+        return True
+
+if _is_tpu_installed():
+    import torch_xla.core.xla_model as xm
+    from torch_xla.amp import GradScaler as xla_grad_scaler
+    import torch_xla.distributed.parallel_loader as pl
 
 class Trainer:
     """Train models with Composer algorithms.
@@ -802,8 +816,8 @@ class Trainer:
         self.adaptive_gradient_accumulation = _is_adaptive_grad_accum(grad_accum, device=self._device)
         grad_accum = _get_initial_grad_accum(grad_accum)
 
-        if grad_accum > 1 and isinstance(self._device, DeviceTPU):
-            raise NotImplementedError(f'auto grad accum not implemented on TPUs yet')
+        if self.adaptive_gradient_accumulation and isinstance(self._device, DeviceTPU):
+            raise NotImplementedError(f'grad_accum=auto not supported on TPUs.')
 
         # Dynamic time estimate for forward and backward pass. Used for monitored_barrier to avoid deadlocks
         self.batch_compute_time = 300
@@ -905,14 +919,7 @@ class Trainer:
             self.state.set_dataloader(self._train_data_spec.dataloader, train_dataloader_label,
                                       train_subset_num_batches)
             if isinstance(self._device, DeviceTPU):
-                try:
-                    import torch_xla.core.xla_model as xm
-                    import torch_xla.distributed.parallel_loader as pl
-                except ImportError as e:
-                    raise MissingConditionalImportError(extra_deps_group='tpu', conda_package='torch_xla[tpuvm]') from e
-
-                self.state.train_dataloader = pl.MpDeviceLoader(self.state.train_dataloader, xm.xla_device())
-
+                self.state.train_dataloader = pl.MpDeviceLoader(self.state.dataloader, xm.xla_device())
             else:
                 self.state.train_dataloader = self.state.dataloader
         self.train_metrics = _get_training_metrics(model) if compute_training_metrics else None
@@ -1468,11 +1475,6 @@ class Trainer:
         self.engine.run_event(Event.FIT_START)
 
         if isinstance(self._device, DeviceTPU):
-            try:
-                from torch_xla.amp import GradScaler as xla_grad_scaler
-            except ImportError as e:
-                raise MissingConditionalImportError(extra_deps_group='tpu', conda_package='torch_xla[tpuvm]') from e
-
             self.state.scaler = xla_grad_scaler()
         else:
             self.state.scaler = ClosureGradScaler() if self._use_closures() else cuda_grad_scaler()
@@ -1559,12 +1561,9 @@ class Trainer:
 
                     # total_loss can be None if gradient scaling failed
                     dist.all_reduce(total_loss, reduce_operation='SUM')
-                    if isinstance(self._device, DeviceTPU):
-                        if int(self.state.timestamp.batch) % 20 == 0:
-                            full_loss = total_loss.cpu().item()
-                    else:
-                        full_loss = total_loss.cpu().item()
-                        self.logger.data_batch({'loss/train': full_loss / dist.get_world_size()})
+
+                    full_loss = total_loss.cpu().item()
+                    self.logger.data_batch({'loss/train': full_loss / dist.get_world_size()})
 
                 # The scheduler step.step() and compute_and_log_metrics() are going to be included in the
                 # next batch's wall clock time. The time accumulation must be done here so schedulers
@@ -1687,32 +1686,24 @@ class Trainer:
                 if self.deepspeed_enabled:
                     total_loss = self._train_microbatches(microbatches)
                 elif self._use_closures():
-                    if isinstance(self._device, DeviceTPU):
-                        try:
-                            import torch_xla.core.xla_model as xm
-                        except ImportError as e:
-                            raise MissingConditionalImportError(extra_deps_group='tpu',
-                                                                conda_package='torch_xla[tpuvm]') from e
-
-                        for optimizer in self.state.optimizers:
-                            total_loss = self._train_microbatches(microbatches)
-                            xm.optimizer_step(optimizer)
-                    else:
-                        for optimizer in self.state.optimizers:
-                            if use_grad_scaling:
-                                total_loss = self.state.scaler.step(
-                                    optimizer,
-                                    closure=lambda **kwargs: self._train_microbatches(microbatches, **kwargs))
-                            else:
-                                total_loss = optimizer.step(
-                                    closure=lambda **kwargs: self._train_microbatches(microbatches, **kwargs).item())
+                    for optimizer in self.state.optimizers:
+                        if use_grad_scaling:
+                            total_loss = self.state.scaler.step(
+                                optimizer,
+                                closure=lambda **kwargs: self._train_microbatches(microbatches, **kwargs))
+                        else:
+                            total_loss = optimizer.step(
+                                closure=lambda **kwargs: self._train_microbatches(microbatches, **kwargs).item())
                 else:
                     total_loss = self._train_microbatches(microbatches)
                     for optimizer in self.state.optimizers:
                         if use_grad_scaling:
                             self.state.scaler.step(optimizer)
                         else:
-                            optimizer.step()
+                            if isinstance(self._device, DeviceTPU):
+                                xm.optimizer_step(optimizer)
+                            else:
+                                optimizer.step()
 
             except RuntimeError as e:
                 if self.adaptive_gradient_accumulation and _is_cuda_oom(e):
@@ -2221,6 +2212,9 @@ class Trainer:
         with the _step_supports_amp_closure flag.
         """
         if self.deepspeed_enabled:
+            return False
+
+        if isinstance(self._device, DeviceTPU):
             return False
 
         if self.state.precision != Precision.AMP:
