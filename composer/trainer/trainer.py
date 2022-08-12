@@ -808,7 +808,7 @@ class Trainer:
         if not deepspeed_enabled:
             # check if model is already on tpu
             if isinstance(self._device, DeviceTPU) and 'xla' not in str(next(model.parameters()).device):
-                raise ValueError('the model needs to be on tpu before optimizer')
+                raise ValueError('Use model.to(xm.xla_device()) to set the model to the TPU before providing to the trainer.')
             else:
                 model = self._device.module_to_device(model)
                 # Move any remaining optimizer parameters onto the device
