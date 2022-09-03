@@ -5,14 +5,18 @@ from composer.core.evaluator import Evaluator
 from composer.optim.decoupled_weight_decay import DecoupledAdamW
 from composer.optim.scheduler import LinearWithWarmupScheduler
 from composer.trainer.trainer import Trainer
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
+from composer.core.types import Dataset
 from composer.utils import dist
+from typing import cast
+
 
 def _build_dataloader(dataset: Dataset, **kwargs):
     import transformers
+    import datasets
     return DataLoader(
         dataset=dataset,
-        sampler=dist.get_sampler(dataset, drop_last=False, shuffle=False),
+        sampler=dist.get_sampler(cast(datasets.Dataset, dataset), drop_last=False, shuffle=False),
         collate_fn=transformers.default_data_collator,
         **kwargs
     )
@@ -51,7 +55,7 @@ class MNLIJob(FineTuneJob):
 
         scheduler = LinearWithWarmupScheduler(t_warmup='0.06dur')
 
-        train_dataset = create_glue_dataset(split='train', **dataset_kwargs),
+        train_dataset = create_glue_dataset(split='train', **dataset_kwargs)
         eval_mnli = create_glue_dataset(split='validation_matched', **dataset_kwargs)
         eval_mnli_mismatch = create_glue_dataset(split='validation_mismatched', **dataset_kwargs)
 
@@ -75,7 +79,6 @@ class MNLIJob(FineTuneJob):
             eval_interval=self.eval_interval,
             load_path=self.load_path,
             save_folder=self.save_folder,
-            load_weights_only=True,
             **self.kwargs,
         )
 
@@ -132,7 +135,6 @@ class RTEJob(FineTuneJob):
             eval_interval=self.eval_interval,
             load_path=self.load_path,
             save_folder=self.save_folder,
-            load_weights_only=True,
             **self.kwargs,
         )
 
@@ -144,7 +146,7 @@ class QQPJob(FineTuneJob):
 
     def get_trainer(self):
         dataset_kwargs = {
-            'task': 'rte',
+            'task': 'qqp',
             'tokenizer_name': 'bert-base-uncased',
             'max_seq_length': 256,
         }
@@ -189,6 +191,5 @@ class QQPJob(FineTuneJob):
             eval_interval=self.eval_interval,
             load_path=self.load_path,
             save_folder=self.save_folder,
-            load_weights_only=True,
             **self.kwargs,
         )
