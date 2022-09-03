@@ -11,9 +11,22 @@ from composer.datasets.coco import COCODetection, StreamingCOCO
 from composer.datasets.imagenet import StreamingImageNet1k
 from composer.datasets.synthetic import (SyntheticBatchPairDataset, SyntheticDataLabelType, SyntheticDataType,
                                          SyntheticPILDataset)
+from composer.datasets.glue import create_glue_dataset
 
 __all__ = [
-    'ADE20k', 'StreamingADE20k', 'PytTrain', 'PytVal', 'C4Dataset', 'StreamingC4', 'StreamingCIFAR10', 'COCODetection',
-    'StreamingCOCO', 'StreamingImageNet1k', 'SyntheticBatchPairDataset', 'SyntheticDataLabelType', 'SyntheticDataType',
-    'SyntheticPILDataset'
+    'ADE20k',
+    'StreamingADE20k',
+    'PytTrain',
+    'PytVal',
+    'create_glue_dataset',
+    'C4Dataset',
+    'StreamingC4',
+    'StreamingCIFAR10',
+    'COCODetection',
+    'StreamingCOCO',
+    'StreamingImageNet1k',
+    'SyntheticBatchPairDataset',
+    'SyntheticDataLabelType',
+    'SyntheticDataType',
+    'SyntheticPILDataset',
 ]

@@ -30,6 +30,9 @@ like in the following::
     >>> python examples/glue/run_glue_trainer.py
     finetune_hparams --help
 """
+from argparse import ArgumentParser
+import argparse
+from collections import defaultdict
 import multiprocessing as mp
 import os
 import subprocess
@@ -39,11 +42,12 @@ import warnings
 from multiprocessing import Pool
 from dataclasses import dataclass
 from multiprocessing.context import BaseContext
-from typing import Dict, List, Optional, Tuple, Sequence
+from typing import Dict, List, Optional, Tuple, Sequence, Any
 from torch.utils.data import DataLoader
 import torch
 import yahp as hp
 import yaml
+
 from composer.trainer.trainer import Trainer
 from composer.utils.checkpoint import save_checkpoint
 from nlp_trainer_hparams import GLUETrainerHparams, NLPTrainerHparams
@@ -53,13 +57,23 @@ from composer.core.data_spec import DataSpec
 from composer.core.time import Time, Timestamp, TimeUnit
 from composer.loggers.object_store_logger import ObjectStoreLogger
 from composer.loggers.wandb_logger import WandBLogger
-from composer.trainer.devices.device_cpu import DeviceCPU
-from composer.trainer.devices.device_gpu import DeviceGPU
-from composer.trainer.trainer_hparams import TrainerHparams
 from composer.utils.file_helpers import format_name_with_dist_and_time
 from composer.utils.misc import get_free_tcp_port, warning_on_one_line
 from composer.models import ComposerClassifier
 from torch.utils.data import Dataset
+from composer.models.bert.model import create_bert_classification
+from composer.datasets import create_glue_dataset
+from glue_jobs import MNLIJob, RTEJob, QQPJob
+
+parser = argparse.ArgumentParser()
+
+parser.add_argument('--pretrained', type=str, help='Path to pretrained checkpoint.')
+parser.add_argument('--wandb_project', type=str, help='wandb project')
+parser.add_argument('--wandb_entity', type=str, help='wandb entity')
+parser.add_argument('--run_name', type=str, help='run_name')
+parser.add_argument('--save_folder', type=str, help='save folder for checkpoints')
+
+args = parser.parse_args()
 
 
 class RandomClassificationDataset(Dataset):
@@ -118,22 +132,19 @@ class SimpleModel(ComposerClassifier):
         self.fc2 = fc2
 
 
-def init_cuda_queue(queue_size: int, ctx: BaseContext) -> mp.Queue:
-    """Generate a multiprocessing queue to store queue_size GPU IDs. The multiprocessing package has no way of extracting the worker ID from the worker name; therefore, a queue is used to map pool workers to GPUs to spawn finetune jobs one."""
-    cuda_envs = ctx.Queue(queue_size)
-    cuda_envs_list = range(queue_size)
-    for e in cuda_envs_list:
-        cuda_envs.put(e)
-
-    return cuda_envs
+def get_worker_id() -> int:
+    # converts SpawnPoolWorker-2 -> 2
+    name = multiprocessing.current_process().name
+    if 'MainProcess' in name:
+        return 0
+    return int(name.split('-')[-1])
 
 
-def init_cuda_env(cuda_envs: mp.Queue, free_port: int) -> None:
-    """Set up a single GPU CUDA environment on initialization of a mp process pool."""
-    env = cuda_envs.get()
-    torch.cuda.set_device(env)
+def init_cuda_env() -> None:
+    """Initializes a single GPU environment"""
+    device_id = get_worker_id()
+    torch.cuda.set_device(device_id)
 
-    # fake a single node world
     os.environ['WORLD_SIZE'] = '1'
     os.environ['LOCAL_WORLD_SIZE'] = '1'
     os.environ['NODE_RANK'] = '0'
@@ -144,7 +155,7 @@ def init_cuda_env(cuda_envs: mp.Queue, free_port: int) -> None:
 
 class FineTuneJob:
 
-    def __init__(self, yaml_path: str = None, load_path: str = None, save_folder: Optional[str] = False, **kwargs):
+    def __init__(self, load_path: str = None, save_folder: Optional[str] = False, **kwargs):
         self.load_path = load_path
         self.save_folder = save_folder
         self.kwargs = kwargs
@@ -161,15 +172,13 @@ class FineTuneJob:
             **self.kwargs,
         )
 
-    def get_worker_id(self) -> int:
-        # converts SpawnPoolWorker-2 -> 2
-        name = multiprocessing.current_process().name
-        if 'MainProcess' in name:
-            return 0
-        return int(name.split('-')[-1])
+    def print_metrics(self, metrics: Dict[str, Dict[str, Any]]):
+        for eval, metric in metrics.items():
+            for metric_name, value in metric.items():
+                print(f'{eval}: {metric_name}, {value}')
 
-    def run(self) -> Tuple[Optional[str], float]:
-        print(f'Starting on Worker {self.get_worker_id()}')
+    def run(self) -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
+        print(f'Starting {self.__class__.__name__} on Worker {get_worker_id()}')
         trainer = self.get_trainer()
         trainer.fit()
 
@@ -178,10 +187,16 @@ class FineTuneJob:
         else:
             saved_checkpoint = None
 
-        metric = trainer.state.eval_metrics['eval']['Accuracy'].compute()
+        metrics = {}
+
+        for eval_name, metrics in trainer.state.eval_metrics.items():
+            metrics[eval_name] = {name: metric.compute() for name, metric in metrics.items()}
+
         trainer.close()
 
-        return saved_checkpoint, float(metric)
+        self.print_metrics(metrics)
+
+        return saved_checkpoint, metrics
 
 
 def run_jobs(jobs: List[FineTuneJob]):
@@ -197,7 +212,7 @@ def run_jobs(jobs: List[FineTuneJob]):
 
 def main():
 
-    # mock a pretrained checkpoint
+    # # mock a pretrained checkpoint
     job = FineTuneJob(load_path=None, save_folder='pretrained', save_overwrite=True)
     checkpoints, _ = job.run()
 
@@ -206,9 +221,23 @@ def main():
 
     jobs = [FineTuneJob(
         load_path=last_checkpoint,
-        save_folder=f'test_{k}',
-        save_overwrite=True,
-    ) for k in range(10)]
+        save_folder=None,
+    ) for _ in range(5)]
+    # common_kwargs = {
+    #     'load_path': args.pretrained,
+    #     'save_overwrite': True,
+    #     'device': 'gpu',
+    #     'progress_bar': False,
+    #     'log_to_console': False,
+    #     'loggers': [WandBLogger(project=args.wandb_project, entity=args.wandb_entity)],
+    #     'run_name': args.run_name,
+    #     'max_duration': '100ba',
+    # }
+
+    # jobs = [
+    #     MNLIJob(save_folder=os.path.join('save_folder', 'mnli'), **common_kwargs),
+    #     QQPJob(save_folder=os.path.join('save_folder', 'qqp'), **common_kwargs),
+    # ]
 
     results = run_jobs(jobs)
     import ipdb
