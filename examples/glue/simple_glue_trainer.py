@@ -7,7 +7,7 @@ import multiprocessing as mp
 import os
 from collections import defaultdict
 from multiprocessing.managers import SyncManager
-from typing import Any, Dict, List, Optional, Sequence, cast
+from typing import Any, Dict, List, Optional, Sequence
 
 import torch
 import transformers
@@ -49,12 +49,14 @@ class FineTuneJob:
 
     def print_metrics(self, metrics: Metrics):
         """Prints fine-tuning results."""
-        job_name = {self.__class__.__name__}
+        job_name = self.__class__.__name__
+
         print(f'Results for {job_name}:')
         print('-' * (12 + len(job_name)))
         for eval, metric in metrics.items():
             for metric_name, value in metric.items():
-                print(f'{eval}: {metric_name}, {value:.3f}')
+                print(f'{eval}: {metric_name}, {value*100:.2f}')
+        print('-' * (12 + len(job_name)))
 
     def run(self, gpu_queue: Optional[mp.Queue] = None) -> Dict[str, Any]:
         """Trains the model, optionally pulling a GPU id from the queue.
@@ -95,9 +97,9 @@ class FineTuneJob:
         return {'checkpoints': saved_checkpoint, 'metrics': collected_metrics}
 
 
-def _setup_gpu_queue(num_gpus: int, manager: SyncManager) -> mp.Queue[int]:
+def _setup_gpu_queue(num_gpus: int, manager: SyncManager):
     """Returns a queue with [0, 1, .. num_gpus]."""
-    gpu_queue = cast(mp.Queue[int], manager.Queue(num_gpus))
+    gpu_queue = manager.Queue(num_gpus)
     for gpu_id in range(num_gpus):
         gpu_queue.put(gpu_id)
     return gpu_queue
@@ -146,8 +148,10 @@ def _print_table(results: Dict[str, Dict[str, Any]]):
     """Pretty prints a table given a results dictionary."""
     header = '{job_name:10}| {eval_task:25}| {name:15}|'
     row_format = header + ' {value:.2f}'
+    print('\nCollected Job Results: \n')
+    print('-' * 61)
     print(header.format(job_name='Job', eval_task='Dataset', name='Metric'))
-    print('-' * 55)
+    print('-' * 61)
     for job_name, result in results.items():
         for eval_task, eval_results in result['metrics'].items():
             for name, metric in eval_results.items():
@@ -158,6 +162,8 @@ def _print_table(results: Dict[str, Dict[str, Any]]):
                         name=name,
                         value=metric * 100,
                     ))
+    print('-' * 61)
+    print('\n')
 
 
 def main():

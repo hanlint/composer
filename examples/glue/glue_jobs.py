@@ -4,7 +4,7 @@
 """Contains GLUE job objects for the simple_glue_trainer."""
 from typing import cast
 
-from new_glue_trainer import FineTuneJob
+from simple_glue_trainer import FineTuneJob
 from torch.utils.data import DataLoader
 
 from composer.core.evaluator import Evaluator
