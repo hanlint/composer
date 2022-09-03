@@ -5,8 +5,17 @@ from composer.core.evaluator import Evaluator
 from composer.optim.decoupled_weight_decay import DecoupledAdamW
 from composer.optim.scheduler import LinearWithWarmupScheduler
 from composer.trainer.trainer import Trainer
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
+from composer.utils import dist
 
+def _build_dataloader(dataset: Dataset, **kwargs):
+    import transformers
+    return DataLoader(
+        dataset=dataset,
+        sampler=dist.get_sampler(dataset, drop_last=False, shuffle=False),
+        collate_fn=transformers.default_data_collator,
+        **kwargs
+    )
 
 class MNLIJob(FineTuneJob):
 
@@ -22,7 +31,7 @@ class MNLIJob(FineTuneJob):
 
         dataloader_kwargs = {
             'batch_size': 48,
-            'num_workers': 8,
+            'num_workers': 0,
             'shuffle': False,
             'drop_last': False,
         }
@@ -35,7 +44,7 @@ class MNLIJob(FineTuneJob):
         optimizer = DecoupledAdamW(
             model.parameters(),
             lr=5.0e-5,
-            beats=(0.9, 0.98),
+            betas=(0.9, 0.98),
             eps=1.0e-6,
             weight_decay=5.0e-6,
         )
@@ -50,25 +59,16 @@ class MNLIJob(FineTuneJob):
             model=model,
             optimizers=optimizer,
             schedulers=scheduler,
-            train_dataloader=DataLoader(
-                dataset=train_dataset,
-                **dataloader_kwargs,
-            ),
-            evaluators=[
+            train_dataloader=_build_dataloader(train_dataset, **dataloader_kwargs),
+            eval_dataloader=[
                 Evaluator(
                     label='glue_mnli',
-                    dataloader=DataLoader(
-                        dataset=eval_mnli,
-                        **dataloader_kwargs,
-                    ),
+                    dataloader=_build_dataloader(eval_mnli, **dataloader_kwargs),
                     metric_names=['Accuracy'],
                 ),
                 Evaluator(
                     label='glue_mnli_mismatched',
-                    dataloader=DataLoader(
-                        dataset=eval_mnli_mismatch,
-                        **dataloader_kwargs,
-                    ),
+                    dataloader=_build_dataloader(eval_mnli_mismatch, **dataloader_kwargs),
                     metric_names=['Accuracy'],
                 ),
             ],
@@ -94,7 +94,7 @@ class RTEJob(FineTuneJob):
 
         dataloader_kwargs = {
             'batch_size': 16,
-            'num_workers': 8,
+            'num_workers': 0,
             'shuffle': False,
             'drop_last': False,
         }
@@ -107,31 +107,25 @@ class RTEJob(FineTuneJob):
         optimizer = DecoupledAdamW(
             model.parameters(),
             lr=1.0e-5,
-            beats=(0.9, 0.98),
+            betas=(0.9, 0.98),
             eps=1.0e-6,
             weight_decay=1.0e-6,
         )
 
         scheduler = LinearWithWarmupScheduler(t_warmup='0.06dur')
 
-        train_dataset = create_glue_dataset(split='train', **dataset_kwargs),
+        train_dataset = create_glue_dataset(split='train', **dataset_kwargs)
         eval_dataset = create_glue_dataset(split='validation', **dataset_kwargs)
 
         return Trainer(
             model=model,
             optimizers=optimizer,
             schedulers=scheduler,
-            train_dataloader=DataLoader(
-                dataset=train_dataset,
-                **dataloader_kwargs,
-            ),
-            evaluators=[
+            train_dataloader=_build_dataloader(train_dataset, **dataloader_kwargs),
+            eval_dataloader=[
                 Evaluator(
                     label='glue_rte',
-                    dataloader=DataLoader(
-                        dataset=eval_dataset,
-                        **dataloader_kwargs,
-                    ),
+                    dataloader=_build_dataloader(eval_dataset, **dataloader_kwargs),
                     metric_names=['Accuracy'],
                 ),
             ],
@@ -157,7 +151,7 @@ class QQPJob(FineTuneJob):
 
         dataloader_kwargs = {
             'batch_size': 16,
-            'num_workers': 8,
+            'num_workers': 0,
             'shuffle': False,
             'drop_last': False,
         }
@@ -170,31 +164,25 @@ class QQPJob(FineTuneJob):
         optimizer = DecoupledAdamW(
             model.parameters(),
             lr=3.0e-5,
-            beats=(0.9, 0.98),
+            betas=(0.9, 0.98),
             eps=1.0e-6,
             weight_decay=3.0e-6,
         )
 
         scheduler = LinearWithWarmupScheduler(t_warmup='0.06dur')
 
-        train_dataset = create_glue_dataset(split='train', **dataset_kwargs),
+        train_dataset = create_glue_dataset(split='train', **dataset_kwargs)
         eval_dataset = create_glue_dataset(split='validation', **dataset_kwargs)
 
         return Trainer(
             model=model,
             optimizers=optimizer,
             schedulers=scheduler,
-            train_dataloader=DataLoader(
-                dataset=train_dataset,
-                **dataloader_kwargs,
-            ),
-            evaluators=[
+            train_dataloader=_build_dataloader(train_dataset, **dataloader_kwargs),
+            eval_dataloader=[
                 Evaluator(
                     label='glue_rte',
-                    dataloader=DataLoader(
-                        dataset=eval_dataset,
-                        **dataloader_kwargs,
-                    ),
+                    dataloader=_build_dataloader(eval_dataset, **dataloader_kwargs),
                     metric_names=['Accuracy'],
                 ),
             ],

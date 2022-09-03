@@ -64,6 +64,8 @@ from torch.utils.data import Dataset
 from composer.models.bert.model import create_bert_classification
 from composer.datasets import create_glue_dataset
 
+Metrics = Dict[str, Dict[str, Any]]
+
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--pretrained', type=str, help='Path to pretrained checkpoint.')
@@ -131,27 +133,6 @@ class SimpleModel(ComposerClassifier):
         self.fc2 = fc2
 
 
-def get_worker_id() -> int:
-    # converts SpawnPoolWorker-2 -> 2
-    name = multiprocessing.current_process().name
-    if 'MainProcess' in name:
-        return 0
-    return int(name.split('-')[-1])
-
-
-def init_cuda_env() -> None:
-    """Initializes a single GPU environment"""
-    device_id = get_worker_id()
-    torch.cuda.set_device(device_id)
-
-    os.environ['WORLD_SIZE'] = '1'
-    os.environ['LOCAL_WORLD_SIZE'] = '1'
-    os.environ['NODE_RANK'] = '0'
-    os.environ['LOCAL_RANK'] = '0'
-    os.environ['RANK'] = '0'
-    os.environ['MASTER_ADDR'] = '127.0.0.1'
-
-
 class FineTuneJob:
 
     def __init__(self, load_path: str = None, save_folder: Optional[str] = False, **kwargs):
@@ -171,72 +152,102 @@ class FineTuneJob:
             **self.kwargs,
         )
 
-    def print_metrics(self, metrics: Dict[str, Dict[str, Any]]):
+    def print_metrics(self, metrics: Metrics):
         print(f'Results for {self.__class__.__name__}:')
         for eval, metric in metrics.items():
             for metric_name, value in metric.items():
                 print(f'{eval}: {metric_name}, {value:.3f}')
 
-    def run(self) -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
-        print(f'Starting {self.__class__.__name__} on Worker {get_worker_id()}')
-        trainer = self.get_trainer()
-        trainer.fit()
+    def run(self, gpu_queue: Optional[mp.Queue]=None) -> Tuple[Optional[str], Metrics]:
+        gpu_id = gpu_queue.get() if gpu_queue else 0
+        torch.cuda.set_device(gpu_id)
+        print(f'Running {self.__class__.__name__} on GPU {gpu_id}')
 
-        if trainer.saved_checkpoints:
-            saved_checkpoint = trainer.saved_checkpoints
-        else:
-            saved_checkpoint = None
+        try:
+            trainer = self.get_trainer()
+            trainer.fit()
 
-        collected_metrics = {}
-        for eval_name, metrics in trainer.state.eval_metrics.items():
-            collected_metrics[eval_name] = {name: metric.compute() for name, metric in metrics.items()}
+            if trainer.saved_checkpoints:
+                saved_checkpoint = trainer.saved_checkpoints
+            else:
+                saved_checkpoint = None
 
-        trainer.close()
-        self.print_metrics(collected_metrics)
+            collected_metrics = {}
+            for eval_name, metrics in trainer.state.eval_metrics.items():
+                collected_metrics[eval_name] = {name: metric.compute() for name, metric in metrics.items()}
+
+            trainer.close()
+            self.print_metrics(collected_metrics)
+        finally:
+            # release GPU back to the queue
+            if gpu_queue:
+                print(f'Putting back {gpu_id}')
+                gpu_queue.put(gpu_id)
 
         return saved_checkpoint, collected_metrics
 
 
+def _setup_gpu_queue(num_gpus: int, manager: BaseContext) -> mp.Queue:
+    gpu_queue = manager.Queue(num_gpus)
+    for gpu_id in range(num_gpus):
+        gpu_queue.put(gpu_id)
+    return gpu_queue
+
+
 def run_jobs(jobs: List[FineTuneJob]):
+    """Runs a list of jobs across GPUs."""
+    num_gpus = torch.cuda.device_count()
 
-    with Pool(processes=2) as pool:
-        results = [pool.apply_async(job.run) for job in jobs]
+    with mp.Manager() as manager:
 
-        pool.close()
-        pool.join()
+        # workers get gpu ids from this queue
+        # to set the GPU to run on
+        gpu_queue = _setup_gpu_queue(num_gpus, manager)
 
-    return [r.get() for r in results]
+        ctx = multiprocessing.get_context('spawn')
+
+        with ctx.Pool(processes=num_gpus, maxtasksperchild=1) as pool:
+            results = [
+                pool.apply_async(job.run, args=(gpu_queue,))
+                for job in jobs
+            ]
+
+            pool.close()
+            pool.join()
+
+    finished_results = [r.get() for r in results]
+    return finished_results
 
 
 def main():
     from glue_jobs import MNLIJob, RTEJob, QQPJob
 
     # # mock a pretrained checkpoint
-    job = FineTuneJob(load_path=None, save_folder='pretrained', save_overwrite=True)
-    checkpoints, _ = job.run()
+    # job = FineTuneJob(load_path=None, save_folder='pretrained', save_overwrite=True)
+    # checkpoints, _ = job.run()
 
-    assert checkpoints is not None
-    last_checkpoint = checkpoints[-1]
+    # assert checkpoints is not None
+    # last_checkpoint = checkpoints[-1]
 
-    jobs = [FineTuneJob(
-        load_path=last_checkpoint,
-        save_folder=None,
-    ) for _ in range(5)]
-    # common_kwargs = {
-    #     'load_path': args.pretrained,
-    #     'save_overwrite': True,
-    #     'device': 'gpu',
-    #     'progress_bar': False,
-    #     'log_to_console': False,
-    #     'loggers': [WandBLogger(project=args.wandb_project, entity=args.wandb_entity)],
-    #     'run_name': args.run_name,
-    #     'max_duration': '100ba',
-    # }
+    # jobs = [FineTuneJob(
+    #     load_path=last_checkpoint,
+    #     save_folder=None,
+    # ) for _ in range(5)]
+    common_kwargs = {
+        'load_path': args.pretrained,
+        'save_overwrite': True,
+        'device': 'gpu',
+        'progress_bar': False,
+        'log_to_console': False,
+        # 'loggers': [WandBLogger(project=args.wandb_project, entity=args.wandb_entity)],
+        'run_name': args.run_name,
+        'max_duration': '100ba',
+    }
 
-    # jobs = [
-    #     MNLIJob(save_folder=os.path.join('save_folder', 'mnli'), **common_kwargs),
-    #     QQPJob(save_folder=os.path.join('save_folder', 'qqp'), **common_kwargs),
-    # ]
+    jobs = [
+        MNLIJob(save_folder=os.path.join(args.save_folder, 'mnli'), **common_kwargs),
+        QQPJob(save_folder=os.path.join(args.save_folder, 'qqp'), **common_kwargs),
+    ]
 
     results = run_jobs(jobs)
     import ipdb

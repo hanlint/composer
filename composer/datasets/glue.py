@@ -74,3 +74,4 @@ def create_glue_dataset(
         new_fingerprint=f'{task}-{tokenizer_name}-tokenization-{split}',
         load_from_cache_file=True,
     )
+    return dataset
