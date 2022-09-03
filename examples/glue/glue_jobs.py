@@ -1,27 +1,35 @@
-from new_glue_trainer import FineTuneJob
-from composer.models.bert.model import create_bert_classification
-from composer.datasets import create_glue_dataset
-from composer.core.evaluator import Evaluator
-from composer.optim.decoupled_weight_decay import DecoupledAdamW
-from composer.optim.scheduler import LinearWithWarmupScheduler
-from composer.trainer.trainer import Trainer
-from torch.utils.data import DataLoader
-from composer.core.types import Dataset
-from composer.utils import dist
+# Copyright 2022 MosaicML Composer authors
+# SPDX-License-Identifier: Apache-2.0
+
+"""Contains GLUE job objects for the simple_glue_trainer."""
 from typing import cast
 
+from new_glue_trainer import FineTuneJob
+from torch.utils.data import DataLoader
 
-def _build_dataloader(dataset: Dataset, **kwargs):
+from composer.core.evaluator import Evaluator
+from composer.core.types import Dataset
+from composer.datasets import create_glue_dataset
+from composer.models.bert.model import create_bert_classification
+from composer.optim import DecoupledAdamW, LinearWithWarmupScheduler
+from composer.trainer.trainer import Trainer
+from composer.utils import dist
+
+
+def _build_dataloader(dataset, **kwargs):
     import transformers
-    import datasets
+    dataset = cast(Dataset, dataset)
+
     return DataLoader(
         dataset=dataset,
-        sampler=dist.get_sampler(cast(datasets.Dataset, dataset), drop_last=False, shuffle=False),
+        sampler=dist.get_sampler(dataset, drop_last=False, shuffle=False),
         collate_fn=transformers.default_data_collator,
-        **kwargs
+        **kwargs,
     )
 
+
 class MNLIJob(FineTuneJob):
+    """MNLI."""
 
     num_labels = 3
     eval_interval = '2300ba'
@@ -84,6 +92,7 @@ class MNLIJob(FineTuneJob):
 
 
 class RTEJob(FineTuneJob):
+    """RTE."""
 
     num_labels = 2
     eval_interval = '1000ba'
@@ -140,6 +149,7 @@ class RTEJob(FineTuneJob):
 
 
 class QQPJob(FineTuneJob):
+    """QQP."""
 
     num_labels = 2
     eval_interval = '2000ba'
