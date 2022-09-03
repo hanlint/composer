@@ -211,7 +211,7 @@ def main():
     # then finetune from MNLI checkpoint
     mnli_checkpoint = results['MNLIJob_0']['checkpoints'][-1]
     if not os.path.exists(mnli_checkpoint):
-        raise FileNotFoundError(f'{mnli_checkpoint} missing, likely an error in the MNLI fine-tuning job.')
+        raise FileNotFoundError(f'{mnli_checkpoint} missing, likely an error in MNLI fine-tuning job.')
 
     load_args = {
         'load_path': mnli_checkpoint,
