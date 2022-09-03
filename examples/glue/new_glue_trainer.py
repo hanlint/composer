@@ -63,7 +63,6 @@ from composer.models import ComposerClassifier
 from torch.utils.data import Dataset
 from composer.models.bert.model import create_bert_classification
 from composer.datasets import create_glue_dataset
-from glue_jobs import MNLIJob, RTEJob, QQPJob
 
 parser = argparse.ArgumentParser()
 
@@ -173,9 +172,10 @@ class FineTuneJob:
         )
 
     def print_metrics(self, metrics: Dict[str, Dict[str, Any]]):
+        print(f'Results for {self.__class__.__name__}:')
         for eval, metric in metrics.items():
             for metric_name, value in metric.items():
-                print(f'{eval}: {metric_name}, {value}')
+                print(f'{eval}: {metric_name}, {value:.3f}')
 
     def run(self) -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
         print(f'Starting {self.__class__.__name__} on Worker {get_worker_id()}')
@@ -187,16 +187,14 @@ class FineTuneJob:
         else:
             saved_checkpoint = None
 
-        metrics = {}
-
+        collected_metrics = {}
         for eval_name, metrics in trainer.state.eval_metrics.items():
-            metrics[eval_name] = {name: metric.compute() for name, metric in metrics.items()}
+            collected_metrics[eval_name] = {name: metric.compute() for name, metric in metrics.items()}
 
         trainer.close()
+        self.print_metrics(collected_metrics)
 
-        self.print_metrics(metrics)
-
-        return saved_checkpoint, metrics
+        return saved_checkpoint, collected_metrics
 
 
 def run_jobs(jobs: List[FineTuneJob]):
@@ -211,6 +209,7 @@ def run_jobs(jobs: List[FineTuneJob]):
 
 
 def main():
+    from glue_jobs import MNLIJob, RTEJob, QQPJob
 
     # # mock a pretrained checkpoint
     job = FineTuneJob(load_path=None, save_folder='pretrained', save_overwrite=True)
