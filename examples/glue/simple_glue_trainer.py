@@ -28,6 +28,7 @@ class FineTuneJob:
     get_trainer() method.
 
     Args:
+        name (str, optional): job name. Defaults to the class name.
         load_path (str, optional): path to load checkpoints. Default: None
         save_folder (str, optional): path to save checkpoints. Default: None
         kwargs (dict, optional): additional arguments passed available to the Trainer.
@@ -35,10 +36,12 @@ class FineTuneJob:
 
     def __init__(
         self,
+        name: Optional[str] = None,
         load_path: Optional[str] = None,
         save_folder: Optional[str] = None,
         **kwargs,
     ):
+        self._name = name
         self.load_path = load_path
         self.save_folder = save_folder
         self.kwargs = kwargs
@@ -60,8 +63,10 @@ class FineTuneJob:
 
     @property
     def name(self) -> str:
-        """Job name, defaults to class name with any `Job` suffix removed."""
-        return self.__class__.__name__.replace('Job', '')
+        """Job name, defaults to class name."""
+        if self._name is not None:
+            return self._name
+        return self.__class__.__name__
 
     def run(self, gpu_queue: Optional[mp.Queue] = None) -> Dict[str, Any]:
         """Trains the model, optionally pulling a GPU id from the queue.
@@ -125,8 +130,8 @@ def run_jobs(jobs: Sequence[FineTuneJob]) -> List[Tuple[str, Dict[str, Any]]]:
     that holds a tuple of (job_name, results).
 
     The job names are unique, e.g. if the provided
-    jobs have names ``['MNLI', 'QQP', 'MNLI']``, the
-    job names will be ``['MNLI_0', 'QQP_0', 'MNLI_1]``.
+    jobs have names ``['MNLIJob', 'QQPJob', 'MNLIJob']``, the
+    job names will be ``['MNLIJob_0', 'QQPJob_0', 'MNLIJob_1]``.
 
     Each job's results is a dict of:
 
@@ -173,12 +178,13 @@ def _print_table(results: Dict[str, Dict[str, Any]]):
     for job_name, result in results.items():
         for eval_task, eval_results in result['metrics'].items():
             for name, metric in eval_results.items():
-                print(row_format.format(
-                    job_name=job_name,
-                    eval_task=eval_task,
-                    name=name,
-                    value=metric * 100,
-                ))
+                print(
+                    row_format.format(
+                        job_name=job_name.replace('Job', ''),
+                        eval_task=eval_task,
+                        name=name,
+                        value=metric * 100,
+                    ))
     print('-' * 61)
     print('\n')
 
@@ -225,7 +231,7 @@ def main():
 
     _print_table(results)
 
-    # then finetune from MNLI checkpoint
+    # then finetune from latest MNLI checkpoint
     mnli_checkpoint = results['MNLIJob_0']['checkpoints'][-1]
     if not os.path.exists(mnli_checkpoint):
         raise FileNotFoundError(f'{mnli_checkpoint} missing, likely an error in MNLI fine-tuning job.')
