@@ -60,21 +60,17 @@ class FineTuneJob:
 
     @property
     def name(self) -> str:
-        """Job name defaults to class name with any Job suffix removed."""
+        """Job name, defaults to class name with any `Job` suffix removed."""
         return self.__class__.__name__.replace('Job', '')
 
     def run(self, gpu_queue: Optional[mp.Queue] = None) -> Dict[str, Any]:
         """Trains the model, optionally pulling a GPU id from the queue.
 
         Returns a dict with keys:
-            * 'checkpoints' (``List[str]``, optional): checkpoint paths, if any.
-            * 'metrics' (``Dict[str, Dict[str, Any]]``):
-              computed metrics as a nested dictionary. e.g.
-
-              .. code-block:: python
-
-                >> metrics['glue_mnli']['Accuracy']
-                0.83
+        * 'checkpoints': list of saved_checkpoints, if any,
+        * 'metrics': nested dict of results, accessed by
+                     dataset and metric name, e.g.
+                     ``metrics['glue_mnli']['Accuracy']``.
         """
         gpu_id = gpu_queue.get() if gpu_queue else 0
         torch.cuda.set_device(gpu_id)
@@ -83,11 +79,6 @@ class FineTuneJob:
         try:
             trainer = self.get_trainer()
             trainer.fit()
-
-            if trainer.saved_checkpoints:
-                saved_checkpoint = trainer.saved_checkpoints
-            else:
-                saved_checkpoint = None
 
             collected_metrics: Dict[str, Dict[str, Any]] = {}
             for eval_name, metrics in trainer.state.eval_metrics.items():
@@ -104,7 +95,7 @@ class FineTuneJob:
                 gpu_queue.put(gpu_id)
 
         return {
-            'checkpoints': saved_checkpoint,
+            'checkpoints': trainer.saved_checkpoints,
             'metrics': collected_metrics,
         }
 
@@ -136,6 +127,13 @@ def run_jobs(jobs: Sequence[FineTuneJob]) -> List[Tuple[str, Dict[str, Any]]]:
     The job names are unique, e.g. if the provided
     jobs have names ``['MNLI', 'QQP', 'MNLI']``, the
     job names will be ``['MNLI_0', 'QQP_0', 'MNLI_1]``.
+
+    Each job's results is a dict of:
+
+    * 'checkpoints': list of saved_checkpoints, if any,
+    * 'metrics': nested dict of results, accessed by
+                 dataset and metric name, e.g.
+                 ``metrics['glue_mnli']['Accuracy']``.
     """
     num_gpus = torch.cuda.device_count()
 
@@ -225,7 +223,7 @@ def main():
 
     results = dict(run_jobs(jobs))
 
-    _print_table(dict(results))
+    _print_table(results)
 
     # then finetune from MNLI checkpoint
     mnli_checkpoint = results['MNLIJob_0']['checkpoints'][-1]
@@ -241,9 +239,9 @@ def main():
         RTEJob(save_folder=None, **load_args, **get_job_config()),
     ]
 
-    results = run_jobs(jobs)
+    results = dict(run_jobs(jobs))
 
-    _print_table(dict(results))
+    _print_table(results)
 
 
 if __name__ == '__main__':
