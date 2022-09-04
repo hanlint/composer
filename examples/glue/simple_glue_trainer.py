@@ -7,7 +7,7 @@ import multiprocessing as mp
 import os
 from collections import defaultdict
 from multiprocessing.managers import SyncManager
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 import transformers
@@ -58,14 +58,23 @@ class FineTuneJob:
                 print(f'{eval}: {metric_name}, {value*100:.2f}')
         print('-' * (12 + len(job_name)))
 
+    @property
+    def name(self) -> str:
+        """Job name defaults to class name with any Job suffix removed."""
+        return self.__class__.__name__.replace('Job', '')
+
     def run(self, gpu_queue: Optional[mp.Queue] = None) -> Dict[str, Any]:
         """Trains the model, optionally pulling a GPU id from the queue.
 
-        Returns a dict of: {
-            'checkpoints': <list of saved checkpoints>,
-            'metrics': <Dict[dataset_label, Dict[metric_name, result]]>
-        }
+        Returns a dict with keys:
+            * 'checkpoints' (``List[str]``, optional): checkpoint paths, if any.
+            * 'metrics' (``Dict[str, Dict[str, Any]]``):
+              computed metrics as a nested dictionary. e.g.
 
+              .. code-block:: python
+
+                >> metrics['glue_mnli']['Accuracy']
+                0.83
         """
         gpu_id = gpu_queue.get() if gpu_queue else 0
         torch.cuda.set_device(gpu_id)
@@ -80,7 +89,7 @@ class FineTuneJob:
             else:
                 saved_checkpoint = None
 
-            collected_metrics = {}
+            collected_metrics: Dict[str, Dict[str, Any]] = {}
             for eval_name, metrics in trainer.state.eval_metrics.items():
                 collected_metrics[eval_name] = {
                     name: metric.compute().cpu().numpy() for name, metric in metrics.items()
@@ -94,7 +103,10 @@ class FineTuneJob:
                 print(f'Releasing GPU {gpu_id}')
                 gpu_queue.put(gpu_id)
 
-        return {'checkpoints': saved_checkpoint, 'metrics': collected_metrics}
+        return {
+            'checkpoints': saved_checkpoint,
+            'metrics': collected_metrics,
+        }
 
 
 def _setup_gpu_queue(num_gpus: int, manager: SyncManager):
@@ -115,8 +127,16 @@ def _get_unique_ids(names: List[str]):
     return [f'{n}_{i}' for (n, i) in zip(names, ids)]
 
 
-def run_jobs(jobs: Sequence[FineTuneJob]):
-    """Runs a list of jobs across GPUs."""
+def run_jobs(jobs: Sequence[FineTuneJob]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Runs a list of jobs across GPUs.
+
+    Returns a list, one for each job,
+    that holds a tuple of (job_name, results).
+
+    The job names are unique, e.g. if the provided
+    jobs have names ``['MNLI', 'QQP', 'MNLI']``, the
+    job names will be ``['MNLI_0', 'QQP_0', 'MNLI_1]``.
+    """
     num_gpus = torch.cuda.device_count()
 
     with mp.Manager() as manager:
@@ -125,7 +145,7 @@ def run_jobs(jobs: Sequence[FineTuneJob]):
         # to set the GPU to run on
         gpu_queue = _setup_gpu_queue(num_gpus, manager)
 
-        job_ids = _get_unique_ids([job.__class__.__name__ for job in jobs])
+        job_ids = _get_unique_ids([job.name for job in jobs])
 
         ctx = mp.get_context('spawn')
         with ctx.Pool(processes=num_gpus, maxtasksperchild=1) as pool:
@@ -137,10 +157,10 @@ def run_jobs(jobs: Sequence[FineTuneJob]):
             pool.close()
             pool.join()
 
-    finished_results = {
-        job_id: r.get()  # get() waits until job done
+    finished_results = [
+        (job_id, r.get())  # get() waits until job done
         for (job_id, r) in zip(job_ids, results)
-    }
+    ]
     return finished_results
 
 
@@ -155,13 +175,12 @@ def _print_table(results: Dict[str, Dict[str, Any]]):
     for job_name, result in results.items():
         for eval_task, eval_results in result['metrics'].items():
             for name, metric in eval_results.items():
-                print(
-                    row_format.format(
-                        job_name=job_name.replace('Job', ''),
-                        eval_task=eval_task,
-                        name=name,
-                        value=metric * 100,
-                    ))
+                print(row_format.format(
+                    job_name=job_name,
+                    eval_task=eval_task,
+                    name=name,
+                    value=metric * 100,
+                ))
     print('-' * 61)
     print('\n')
 
@@ -204,9 +223,9 @@ def main():
         QQPJob(save_folder=None, load_path=args.pretrained, **get_job_config()),
     ]
 
-    results = run_jobs(jobs)
+    results = dict(run_jobs(jobs))
 
-    _print_table(results)
+    _print_table(dict(results))
 
     # then finetune from MNLI checkpoint
     mnli_checkpoint = results['MNLIJob_0']['checkpoints'][-1]
@@ -224,7 +243,7 @@ def main():
 
     results = run_jobs(jobs)
 
-    _print_table(results)
+    _print_table(dict(results))
 
 
 if __name__ == '__main__':
