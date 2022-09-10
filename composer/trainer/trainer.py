@@ -1730,7 +1730,7 @@ class Trainer:
         assert self._train_data_spec is not None, 'The train data spec should be set on __init__ or fit()'
         assert self.state.train_metrics is not None, 'The train metrics should be set on __init__ or fit()'
 
-        self.state.model.eval()
+        # self.state.model.eval()
         with torch.no_grad():
             # Retry until we successfully complete evaluation
             while True:

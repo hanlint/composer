@@ -1,0 +1,93 @@
+run_name: resnet50-medium
+gpu_type: a100_40gb
+gpu_num: 1
+platform: r1z2
+image: mosaicml/pytorch:latest
+optimization_level: 0
+integrations:
+  - integration_type: "wandb"
+    project: hanlin-metrics-debug
+    entity: mosaic-ml
+  - integration_type: "git_repo"
+    git_repo: hanlint/composer
+    git_branch: hanlin/debug-nan-no-aga
+    path: composer
+    pip_install: .[all]
+
+command: "cd composer
+
+  composer examples/run_composer_trainer.py -f /mnt/config/parameters.yaml
+
+  "
+
+parameters:
+  algorithms:
+    - sam:
+        epsilon: 1.0e-12
+        interval: 10
+        rho: 0.5
+  callbacks:
+    - lr_monitor: {}
+    - speed_monitor:
+        window_size: 100
+  dataloader:
+    num_workers: 8
+    persistent_workers: true
+    pin_memory: true
+    prefetch_factor: 2
+    timeout: 0.0
+  device:
+    gpu: {}
+  eval_batch_size: 512
+  eval_interval: 1
+  loggers:
+    - wandb:
+        name: no-aga
+        rank_zero_only: True
+    - progress_bar:
+        stream: stderr
+  model:
+    resnet:
+      initializers:
+        - KAIMING_NORMAL
+        - BN_UNIFORM
+        - LINEAR_LOG_CONSTANT_BIAS
+      loss_name: binary_cross_entropy_with_logits
+      model_name: resnet50
+      num_classes: 1000
+  optimizers:
+    decoupled_sgdw:
+      dampening: 0.0
+      lr: 2.048
+      momentum: 0.875
+      nesterov: false
+      weight_decay: 0.0005
+  precision: AMP
+  max_duration: 2ep
+  scale_schedule_ratio: 1.5 # Fraction of 90 epochs to train for. 0.75-2.6 for medium recipe
+  schedulers:
+    cosine_decay_with_warmup:
+      alpha_f: 0.0
+      t_max: 1dur
+      t_warmup: 8ep
+  seed: 42
+  train_batch_size: 2048
+  grad_accum: 2
+  train_dataset:
+    streaming_imagenet1k:
+      remote: s3://mosaicml-internal-dataset-imagenet1k/mds/1/
+      local: /tmp/mds-cache/mds-imagenet1k/
+      split: train
+      resize_size: -1
+      crop_size: 176
+      shuffle: true
+      drop_last: true
+  val_dataset:
+    streaming_imagenet1k:
+      remote: s3://mosaicml-internal-dataset-imagenet1k/mds/1/
+      local: /tmp/mds-cache/mds-imagenet1k/
+      split: val
+      resize_size: 232
+      crop_size: 224
+      shuffle: false
+      drop_last: false
