@@ -1727,7 +1727,6 @@ class Trainer:
         self._run_evaluators(Event.FIT_END, log_level=LogLevel.FIT)
 
     def _eval_train_metrics(self, device_batch):
-        return
         assert self._train_data_spec is not None, 'The train data spec should be set on __init__ or fit()'
         assert self.state.train_metrics is not None, 'The train metrics should be set on __init__ or fit()'
 
@@ -1763,21 +1762,22 @@ class Trainer:
                         pass
 
                 except RuntimeError as e:
+                    raise
                     if self.adaptive_gradient_accumulation and _is_cuda_oom(e):
                         log.debug((f"Rank {dist.get_global_rank()} OOM'd."))
                         found_cuda_oom = 1
                     else:
                         raise
                 # Auto grad accum only supported on GPU
-                if isinstance(self._device, DeviceGPU):
-                    # Propagate across all ranks if any rank hit CUDA OOM
-                    found_cuda_oom = self._device.tensor_to_device(torch.tensor([found_cuda_oom], dtype=torch.uint8))
-                    dist.all_reduce(found_cuda_oom, reduce_operation='MAX')
-                    if found_cuda_oom.item() == 1:
-                        device_batch_size = self._train_data_spec.get_num_samples_in_batch(device_batch)
-                        _adjust_eval_batch_split(self.state, device_batch_size)
-                        # Skip return and rerun after handling oom
-                        continue
+                # if isinstance(self._device, DeviceGPU):
+                #     # Propagate across all ranks if any rank hit CUDA OOM
+                #     found_cuda_oom = self._device.tensor_to_device(torch.tensor([found_cuda_oom], dtype=torch.uint8))
+                #     dist.all_reduce(found_cuda_oom, reduce_operation='MAX')
+                #     if found_cuda_oom.item() == 1:
+                #         device_batch_size = self._train_data_spec.get_num_samples_in_batch(device_batch)
+                #         _adjust_eval_batch_split(self.state, device_batch_size)
+                #         # Skip return and rerun after handling oom
+                #         continue
                 # Return if we've successfully completed eval without OOMing.
                 return
 
