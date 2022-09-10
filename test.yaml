@@ -10,7 +10,7 @@ integrations:
     entity: mosaic-ml
   - integration_type: "git_repo"
     git_repo: hanlint/composer
-    git_branch: hanlin/debug-nan-no-aga
+    git_branch: hanlin/debug-nan-no-aga-noeval
     path: composer
     pip_install: .[all]
 
@@ -42,7 +42,7 @@ parameters:
   eval_interval: 1
   loggers:
     - wandb:
-        name: no-aga
+        name: no-aga-noeval
         rank_zero_only: True
     - progress_bar:
         stream: stderr
