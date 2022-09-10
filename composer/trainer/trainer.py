@@ -1730,7 +1730,7 @@ class Trainer:
         assert self._train_data_spec is not None, 'The train data spec should be set on __init__ or fit()'
         assert self.state.train_metrics is not None, 'The train metrics should be set on __init__ or fit()'
 
-        # self.state.model.eval()
+        self.state.model.eval()
         with torch.no_grad():
             # Retry until we successfully complete evaluation
             while True:
@@ -1741,44 +1741,44 @@ class Trainer:
                         # data and if so print a warning that metrics may return unexpected results
                         with get_precision_context(self.state.precision):
                             if hasattr(self._original_model, 'validate'):  # backwards compatibility check
-                                # warnings.warn(
-                                #     'Using validate() is no longer supported and will be removed in a future version. Please use eval_forward() instead.'
-                                # )
-                                # assert isinstance(self._original_model.validate, Callable)
-                                # eval_outputs, target = self._original_model.validate(eval_microbatch)
+                                warnings.warn(
+                                    'Using validate() is no longer supported and will be removed in a future version. Please use eval_forward() instead.'
+                                )
+                                assert isinstance(self._original_model.validate, Callable)
+                                eval_outputs, target = self._original_model.validate(eval_microbatch)
 
-                                # for _, metric in self.state.train_metrics.items():
-                                #     metric.update(eval_outputs, target)
+                                for _, metric in self.state.train_metrics.items():
+                                    metric.update(eval_outputs, target)
                                 pass
                             else:
-                                # eval_outputs = self._original_model.eval_forward(eval_microbatch, self.state.outputs)
-                                # for _, metric in self.state.train_metrics.items():
-                                #     self._original_model.update_metric(
-                                #         eval_microbatch,
-                                #         eval_outputs,
-                                #         metric,
-                                #     )
+                                eval_outputs = self._original_model.eval_forward(eval_microbatch, self.state.outputs)
+                                for _, metric in self.state.train_metrics.items():
+                                    self._original_model.update_metric(
+                                        eval_microbatch,
+                                        eval_outputs,
+                                        metric,
+                                    )
                                 pass
                         pass
 
                 except RuntimeError as e:
-                    raise
                     if self.adaptive_gradient_accumulation and _is_cuda_oom(e):
                         log.debug((f"Rank {dist.get_global_rank()} OOM'd."))
                         found_cuda_oom = 1
                     else:
                         raise
                 # Auto grad accum only supported on GPU
-                # if isinstance(self._device, DeviceGPU):
-                #     # Propagate across all ranks if any rank hit CUDA OOM
-                #     found_cuda_oom = self._device.tensor_to_device(torch.tensor([found_cuda_oom], dtype=torch.uint8))
-                #     dist.all_reduce(found_cuda_oom, reduce_operation='MAX')
-                #     if found_cuda_oom.item() == 1:
-                #         device_batch_size = self._train_data_spec.get_num_samples_in_batch(device_batch)
-                #         _adjust_eval_batch_split(self.state, device_batch_size)
-                #         # Skip return and rerun after handling oom
-                #         continue
+                if isinstance(self._device, DeviceGPU):
+                    # Propagate across all ranks if any rank hit CUDA OOM
+                    found_cuda_oom = self._device.tensor_to_device(torch.tensor([found_cuda_oom], dtype=torch.uint8))
+                    dist.all_reduce(found_cuda_oom, reduce_operation='MAX')
+                    if found_cuda_oom.item() == 1:
+                        device_batch_size = self._train_data_spec.get_num_samples_in_batch(device_batch)
+                        _adjust_eval_batch_split(self.state, device_batch_size)
+                        # Skip return and rerun after handling oom
+                        continue
                 # Return if we've successfully completed eval without OOMing.
+                self.state.model.train()
                 return
 
     def _run_evaluators(self, event: Event, log_level: LogLevel):

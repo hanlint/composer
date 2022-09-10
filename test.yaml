@@ -10,7 +10,7 @@ integrations:
     entity: mosaic-ml
   - integration_type: "git_repo"
     git_repo: hanlint/composer
-    git_branch: hanlin/debug-nan-no-aga-noeval
+    git_branch: hanlin/debug-nan-fix-train
     path: composer
     pip_install: .[all]
 
