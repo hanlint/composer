@@ -1727,6 +1727,7 @@ class Trainer:
         self._run_evaluators(Event.FIT_END, log_level=LogLevel.FIT)
 
     def _eval_train_metrics(self, device_batch):
+        return
         assert self._train_data_spec is not None, 'The train data spec should be set on __init__ or fit()'
         assert self.state.train_metrics is not None, 'The train metrics should be set on __init__ or fit()'
 
